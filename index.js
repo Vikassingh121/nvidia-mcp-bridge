@@ -15,18 +15,18 @@ const openai = new OpenAI({
 // 2. Initialize the MCP Server
 const server = new Server({
   name: "nvidia-mcp-bridge",
-  version: "1.1.1"
+  version: "1.2.1"
 }, {
   capabilities: { tools: {} }
 });
 
-// 3. Register the Fixed Tool Schema with Antigravity
+// 3. Register both the Gemma and DeepSeek tools with safe schemas
 server.setRequestHandler(ListToolsRequestSchema, async () => {
   return {
     tools: [
       {
         name: "ask_gemma_4",
-        description: "Query Google's Gemma 4 31B via NVIDIA NIM with a dynamic token budget.",
+        description: "Query Google's Gemma 4 31B via NVIDIA NIM with a dynamic token budget. Ideal for high-speed logical reasoning and general everyday coding.",
         inputSchema: {
           type: "object",
           properties: {
@@ -36,7 +36,25 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
             },
             max_tokens: {
               type: "integer",
-              description: "Token budget limit. Example values: 4096 (QA), 8192 (Classes), 16384 (Deep Thinking), 32768 (Full modules)."
+              description: "Token budget limit. Typical choices: 4096 (QA), 8192 (Classes), 16384 (Deep Thinking)."
+            }
+          },
+          required: ["prompt"]
+        }
+      },
+      {
+        name: "ask_deepseek_v4",
+        description: "Query DeepSeek AI V4 Pro via NVIDIA NIM. Ideal for intense software engineering, large multi-file edits, and complex math/logic tasks.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            prompt: {
+              type: "string",
+              description: "The coding task, prompt, or full codebase context."
+            },
+            max_tokens: {
+              type: "integer",
+              description: "Generation token budget. Common choices: 8192 (Default), 16384 (Full class), 32768 (Large modules), 65536+ (Massive files)."
             }
           },
           required: ["prompt"]
@@ -49,57 +67,85 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
 // 4. Track timestamps to respect the 40 RPM limit
 const requestTimestamps = [];
 
-// 5. Handle dynamic execution
+// 5. Tool Call Execution Handler
 server.setRequestHandler(CallToolRequestSchema, async (request) => {
-  if (request.params.name === "ask_gemma_4") {
-    const prompt = request.params.arguments.prompt;
-    const max_tokens = request.params.arguments.max_tokens || 4096;
+  const { name, arguments: args } = request.params;
 
-    // Sliding window rate-limiter for the 40 RPM limit
-    const now = Date.now();
-    while (requestTimestamps.length > 0 && requestTimestamps[0] <= now - 60000) {
-      requestTimestamps.shift();
-    }
+  if (name !== "ask_gemma_4" && name !== "ask_deepseek_v4") {
+    throw new Error("Unknown tool requested");
+  }
 
-    if (requestTimestamps.length >= 35) {
-      const waitTime = 60000 - (now - requestTimestamps[0]);
-      console.error(`[RATE LIMIT] Throttling request for ${Math.ceil(waitTime / 1000)}s...`);
-      await new Promise(resolve => setTimeout(resolve, waitTime));
-    }
+  const prompt = args.prompt;
 
-    requestTimestamps.push(Date.now());
+  // --- Dynamic Model Fallbacks & Bounds ---
+  let max_tokens = args.max_tokens;
+  let modelName = "";
+  let finalMaxTokens = 4096;
 
-    console.error(`[NVIDIA BRIDGE] Forwarding to Gemma 4 (Tokens: ${max_tokens})`);
+  if (name === "ask_deepseek_v4") {
+    modelName = "deepseek-ai/deepseek-v4-pro";
+    // HEURISTIC: If input is huge (>8000 chars), automatically give it more output room
+    const defaultDeepSeekFallback = prompt.length > 8000 ? 32768 : 8192;
+    max_tokens = max_tokens || defaultDeepSeekFallback;
+    // Explicit ceiling to prevent API rejects
+    finalMaxTokens = Math.min(max_tokens, 131072);
+  } else {
+    modelName = "google/gemma-4-31b-it";
+    max_tokens = max_tokens || 4096;
+    // Safe ceiling for Gemma
+    finalMaxTokens = Math.min(max_tokens, 32768);
+  }
 
-    try {
-      const response = await openai.chat.completions.create({
-        model: "google/gemma-4-31b-it",
-        messages: [{ role: "user", content: prompt }],
-        max_tokens: max_tokens,
-        temperature: 0.7,
-        extra_body: {
-          chat_template_kwargs: { "enable_thinking": true }
-        }
-      });
+  // --- Sliding Window Rate Limiter for 40 RPM ---
+  const now = Date.now();
+  while (requestTimestamps.length > 0 && requestTimestamps[0] <= now - 60000) {
+    requestTimestamps.shift();
+  }
 
-      return {
-        content: [{ type: "text", text: response.choices[0].message.content }]
+  if (requestTimestamps.length >= 35) {
+    const waitTime = 60000 - (now - requestTimestamps[0]);
+    console.error(`[RATE LIMIT WARNING] Throttling request for ${Math.ceil(waitTime / 1000)}s...`);
+    await new Promise(resolve => setTimeout(resolve, waitTime));
+  }
+
+  requestTimestamps.push(Date.now());
+  console.error(`[NVIDIA BRIDGE] Invoking ${modelName} (Tokens: ${finalMaxTokens})`);
+
+  try {
+    // Construct the payload dynamically
+    const completionOptions = {
+      model: modelName,
+      messages: [{ role: "user", content: prompt }],
+      max_tokens: finalMaxTokens,
+      temperature: 0.7,
+      top_p: 0.95
+    };
+
+    // Enable thinking reasoning specifically for the Gemma 4 model if needed
+    if (modelName === "google/gemma-4-31b-it") {
+      completionOptions.extra_body = {
+        chat_template_kwargs: { "enable_thinking": true }
       };
-    } catch (error) {
-      if (error.status === 429 || error.message.includes("429")) {
-        return {
-          content: [{ type: "text", text: "Rate limit hit. Please wait 60 seconds." }],
-          isError: true
-        };
-      }
+    }
+
+    const response = await openai.chat.completions.create(completionOptions);
+
+    return {
+      content: [{ type: "text", text: response.choices[0].message.content }]
+    };
+
+  } catch (error) {
+    if (error.status === 429 || error.message.includes("429")) {
       return {
-        content: [{ type: "text", text: `Error from NVIDIA API: ${error.message}` }],
+        content: [{ type: "text", text: "Rate limit hit (40 RPM). Please wait up to 60 seconds." }],
         isError: true
       };
     }
+    return {
+      content: [{ type: "text", text: `Error from NVIDIA API: ${error.message}` }],
+      isError: true
+    };
   }
-
-  throw new Error("Unknown tool requested");
 });
 
 // 6. Connect via Standard Input/Output
