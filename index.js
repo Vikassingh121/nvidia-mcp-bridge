@@ -6,21 +6,22 @@ import {
 } from "@modelcontextprotocol/sdk/types.js";
 import OpenAI from "openai";
 
-// 1. Initialize the OpenAI SDK for NVIDIA NIM
+// 1. Initialize the OpenAI SDK for NVIDIA NIM with an explicit timeout
 const openai = new OpenAI({
   apiKey: process.env.NVIDIA_API_KEY,
-  baseURL: "https://integrate.api.nvidia.com/v1"
+  baseURL: "https://integrate.api.nvidia.com/v1",
+  timeout: 120000 // Forces an error instead of hanging indefinitely
 });
 
 // 2. Initialize the MCP Server
 const server = new Server({
   name: "nvidia-mcp-bridge",
-  version: "1.2.1"
+  version: "1.2.3"
 }, {
   capabilities: { tools: {} }
 });
 
-// 3. Register both the Gemma and DeepSeek tools with safe schemas
+// 3. Register tools
 server.setRequestHandler(ListToolsRequestSchema, async () => {
   return {
     tools: [
@@ -67,36 +68,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
 // 4. Track timestamps to respect the 40 RPM limit
 const requestTimestamps = [];
 
-// 5. Tool Call Execution Handler
-server.setRequestHandler(CallToolRequestSchema, async (request) => {
-  const { name, arguments: args } = request.params;
-
-  if (name !== "ask_gemma_4" && name !== "ask_deepseek_v4") {
-    throw new Error("Unknown tool requested");
-  }
-
-  const prompt = args.prompt;
-
-  // --- Dynamic Model Fallbacks & Bounds ---
-  let max_tokens = args.max_tokens;
-  let modelName = "";
-  let finalMaxTokens = 4096;
-
-  if (name === "ask_deepseek_v4") {
-    modelName = "deepseek-ai/deepseek-v4-pro";
-    // HEURISTIC: If input is huge (>8000 chars), automatically give it more output room
-    const defaultDeepSeekFallback = prompt.length > 8000 ? 32768 : 8192;
-    max_tokens = max_tokens || defaultDeepSeekFallback;
-    // Explicit ceiling to prevent API rejects
-    finalMaxTokens = Math.min(max_tokens, 131072);
-  } else {
-    modelName = "google/gemma-4-31b-it";
-    max_tokens = max_tokens || 4096;
-    // Safe ceiling for Gemma
-    finalMaxTokens = Math.min(max_tokens, 32768);
-  }
-
-  // --- Sliding Window Rate Limiter for 40 RPM ---
+async function checkRateLimit() {
   const now = Date.now();
   while (requestTimestamps.length > 0 && requestTimestamps[0] <= now - 60000) {
     requestTimestamps.shift();
@@ -109,43 +81,89 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
   }
 
   requestTimestamps.push(Date.now());
-  console.error(`[NVIDIA BRIDGE] Invoking ${modelName} (Tokens: ${finalMaxTokens})`);
+}
 
-  try {
-    // Construct the payload dynamically
-    const completionOptions = {
-      model: modelName,
-      messages: [{ role: "user", content: prompt }],
-      max_tokens: finalMaxTokens,
-      temperature: 0.7,
-      top_p: 0.95
-    };
+function handleApiError(error, toolName) {
+  let userFriendlyError = "";
 
-    // Enable thinking reasoning specifically for the Gemma 4 model if needed
-    if (modelName === "google/gemma-4-31b-it") {
-      completionOptions.extra_body = {
-        chat_template_kwargs: { "enable_thinking": true }
-      };
-    }
-
-    const response = await openai.chat.completions.create(completionOptions);
-
-    return {
-      content: [{ type: "text", text: response.choices[0].message.content }]
-    };
-
-  } catch (error) {
-    if (error.status === 429 || error.message.includes("429")) {
-      return {
-        content: [{ type: "text", text: "Rate limit hit (40 RPM). Please wait up to 60 seconds." }],
-        isError: true
-      };
-    }
-    return {
-      content: [{ type: "text", text: `Error from NVIDIA API: ${error.message}` }],
-      isError: true
-    };
+  if (error.name === "APIConnectionTimeoutError" || error.message.includes("timeout")) {
+    userFriendlyError = `🚨 [TIMEOUT] The NVIDIA NIM API took too long to respond. Please try again.`;
+  } else if (error.status === 429 || error.message.includes("429")) {
+    userFriendlyError = "🚨 [NVIDIA API LIMIT] You have hit the 40 RPM limit. Please wait 60 seconds.";
+  } else if (error.message.includes("Missing credentials")) {
+    userFriendlyError = "🚨 [CONFIGURATION ERROR] Your NVIDIA API Key is missing or invalid in mcp_config.json.";
+  } else {
+    userFriendlyError = `🚨 Error executing ${toolName}: ${error.message}`;
   }
+
+  console.error(`[CRITICAL MCP ERROR]: ${userFriendlyError}`);
+  return {
+    content: [{ type: "text", text: userFriendlyError }],
+    isError: true
+  };
+}
+
+// 5. Tool Call Execution Handler
+server.setRequestHandler(CallToolRequestSchema, async (request) => {
+  const { name, arguments: args } = request.params;
+
+  if (name === "ask_gemma_4") {
+    try {
+      const prompt = args.prompt;
+      const requestedTokens = args.max_tokens || 4096;
+      const finalMaxTokens = Math.min(requestedTokens, 32768);
+
+      await checkRateLimit();
+      console.error(`[NVIDIA BRIDGE] Invoking google/gemma-4-31b-it (Tokens: ${finalMaxTokens})`);
+
+      const response = await openai.chat.completions.create({
+        model: "google/gemma-4-31b-it",
+        messages: [{ role: "user", content: prompt }],
+        max_tokens: finalMaxTokens,
+        temperature: 0.7,
+        top_p: 0.95,
+        extra_body: {
+          chat_template_kwargs: { "enable_thinking": true }
+        }
+      });
+
+      return {
+        content: [{ type: "text", text: response.choices[0].message.content }]
+      };
+
+    } catch (error) {
+      return handleApiError(error, name);
+    }
+  }
+
+  if (name === "ask_deepseek_v4") {
+    try {
+      const prompt = args.prompt;
+      const defaultDeepSeekFallback = prompt.length > 8000 ? 32768 : 8192;
+      const requestedTokens = args.max_tokens || defaultDeepSeekFallback;
+      const finalMaxTokens = Math.min(requestedTokens, 131072);
+
+      await checkRateLimit();
+      console.error(`[NVIDIA BRIDGE] Invoking deepseek-ai/deepseek-v4-pro (Tokens: ${finalMaxTokens})`);
+
+      const response = await openai.chat.completions.create({
+        model: "deepseek-ai/deepseek-v4-pro",
+        messages: [{ role: "user", content: prompt }],
+        max_tokens: finalMaxTokens,
+        temperature: 0.7,
+        top_p: 0.95
+      });
+
+      return {
+        content: [{ type: "text", text: response.choices[0].message.content }]
+      };
+
+    } catch (error) {
+      return handleApiError(error, name);
+    }
+  }
+
+  throw new Error("Unknown tool requested");
 });
 
 // 6. Connect via Standard Input/Output

@@ -9,6 +9,7 @@ A Model Context Protocol (MCP) server that bridges Antigravity and other MCP cli
 - **Dynamic Token Budgets**: Scalable output budgets from 4k up to 128k (for DeepSeek) to handle everything from quick Q&A to massive file refactors.
 - **Smart Rate-Limiting**: Built-in proactive throttling at 35 RPM to stay safely within NVIDIA's 40 RPM free tier limits.
 - **Automatic Heuristics**: DeepSeek tool automatically scales its token budget based on input size for large codebase context.
+- **Explicit Error Handling**: Clear, user-friendly diagnostic messages for API limits, configuration issues, and internal failures.
 - **Real-time Logging**: Stderr logging to verify tool calls, model selection, and token counts in real-time.
 
 ## Installation
