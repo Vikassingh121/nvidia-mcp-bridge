@@ -1,15 +1,15 @@
 # NVIDIA MCP Bridge
 
-A Model Context Protocol (MCP) server that bridges Antigravity and other MCP clients to NVIDIA's NIM (NVIDIA Inference Microservices) API. Specifically, it enables high-performance reasoning using Google's **Gemma 4 31B** model.
+A Model Context Protocol (MCP) server that bridges Antigravity and other MCP clients to NVIDIA's NIM (NVIDIA Inference Microservices) API. This bridge enables high-performance reasoning and coding assistance using state-of-the-art open models.
 
 ## Features
 
-- **Gemma 4 31B Integration**: Direct access to one of the most capable open models for coding and reasoning.
-- **Thinking Mode**: Automatically enables "thinking/reasoning" capabilities via NVIDIA NIM's chat template kwargs.
-- **Dynamic Token Budgets**: Choose between 4k and 32k tokens per request for different task complexities.
-- **Smart Rate-Limiting**: Built-in proactive throttling at 35 RPM to prevent API errors.
-- **Real-time Logging**: Built-in stderr logging to verify tool calls and token counts as they happen.
-- **Standard Protocol**: Built on the `@modelcontextprotocol/sdk` for seamless integration with any MCP client.
+- **Multi-Model Support**: Direct access to Google's **Gemma 4 31B** and **DeepSeek V4 Pro**.
+- **Thinking Mode**: Automatically enables "thinking/reasoning" capabilities for Gemma 4 via NVIDIA NIM's chat template kwargs.
+- **Dynamic Token Budgets**: Scalable output budgets from 4k up to 128k (for DeepSeek) to handle everything from quick Q&A to massive file refactors.
+- **Smart Rate-Limiting**: Built-in proactive throttling at 35 RPM to stay safely within NVIDIA's 40 RPM free tier limits.
+- **Automatic Heuristics**: DeepSeek tool automatically scales its token budget based on input size for large codebase context.
+- **Real-time Logging**: Stderr logging to verify tool calls, model selection, and token counts in real-time.
 
 ## Installation
 
@@ -25,18 +25,18 @@ A Model Context Protocol (MCP) server that bridges Antigravity and other MCP cli
    ```
 
 3. **Get an NVIDIA API Key**:
-   Visit [build.nvidia.com](https://build.nvidia.com/) to generate your API key.
+   Visit [build.nvidia.com](https://build.nvidia.com/) to generate your free API key.
 
 ## Configuration
 
 ### Environment Variables
-The server requires the following environment variable:
+The server requires:
 - `NVIDIA_API_KEY`: Your NVIDIA NIM API key.
 
 ### Adding to Antigravity
-To use this bridge, add it to your Antigravity configuration file. 
+Add the bridge to your Antigravity configuration file. 
 
-**Path:** `C:\Users\username\.gemini\antigravity\mcp_config.json`
+**Path:** `C:\Users\<YourUsername>\.gemini\antigravity\mcp_config.json`
 
 ```json
 {
@@ -56,46 +56,60 @@ To use this bridge, add it to your Antigravity configuration file.
 ```
 
 > [!IMPORTANT]
-> Make sure to update the **path to `index.js`** in the `args` section above to match the actual location where you cloned this repository on your machine.
+> Ensure the **path to `index.js`** in `args` and the **`cwd`** match the actual location of the project on your system.
 
 ## Quick Test
 
-To verify the bridge is working correctly in Antigravity, type this in the chat:
+Verify the bridge is working by asking:
 
-`@nvidia-bridge use the ask_gemma_4 tool to tell me what your model name is`
+`@nvidia-bridge: tell me about yourself.`
 
 ## Available Tools
 
 ### `ask_gemma_4`
-Query Google's Gemma 4 31B model via NVIDIA NIM for advanced coding assistance and reasoning.
+Query Google's Gemma 4 31B model. Best for high-speed logical reasoning and everyday coding tasks.
+- **Prompt**: (Required) The task or question.
+- **max_tokens**: (Optional) 4096 (Default), 8192, 16384 (Deep Thinking), up to 32768.
 
-**Arguments:**
-- `prompt` (string, required): The coding task or context to evaluate.
-- `max_tokens` (integer, optional): Choose a token budget based on the task:
-    - `4096`: Standard Q&A (Default)
-    - `8192`: Classes and complex functions
-    - `16384`: Thinking Mode / Deep reasoning
-    - `32768`: Full modules and large files
+### `ask_deepseek_v4`
+Query DeepSeek AI V4 Pro. Optimized for intense software engineering, large multi-file edits, and complex logic.
+- **Prompt**: (Required) The task or codebase context.
+- **max_tokens**: (Optional) 8192 (Default), 16384, 32768 (Large modules), up to 131072.
 
 ---
 
-## Switching Between Models
+## How to Force a Specific Model (Optional)
 
-| Capability | Gemini 3.1 Pro (Native) | Gemma 4 (NVIDIA NIM) |
-| :--- | :--- | :--- |
-| **How to Activate** | Just type normally (or select via model dropdown). | Type `@nvidia-bridge` / use `ask_gemma_4`. |
-| **Reset Rules** | Governed by Antigravity's limits. | Governed by NVIDIA's free API limits (Proactive 35 RPM limit). |
-| **Context Window** | Up to **2 million tokens** per session. | **Dynamic** (Up to **32,768 tokens** per call). |
-| **Ideal Tasks** | Reading entire directories, big refactoring jobs. | Isolated code optimizations, general development Q&A. |
+If you want absolute control and don't want the agent to guess, you can bypass its decision-making entirely by naming the specific tool in your prompt:
+
+- **To guarantee Gemma 4**: `@nvidia-bridge use ask_gemma_4 to explain this regex pattern.`
+- **To guarantee DeepSeek V4 Pro**: `@nvidia-bridge use ask_deepseek_v4 to debug this async race condition.`
+
+---
+
+## Summary Checklist
+
+- **Normal Chat (No @)**: Always uses native Gemini.
+- **Typing `@nvidia-bridge`**: Let the AI Agent pick between Gemma 4 or DeepSeek V4 based on the complexity of your prompt.
+- **Typing `@nvidia-bridge use ask_[model]`**: Forces the exact model you want.
+
+---
+
+## Model Comparison
+
+| Model | Primary Strength | Max Tokens | Best Use Case |
+| :--- | :--- | :--- | :--- |
+| **Gemma 4 31B** | Logical Reasoning & "Thinking" | 32,768 | Fast logic checks, specific bug fixes. |
+| **DeepSeek V4 Pro** | Large-scale Software Engineering | 131,072 | Massive refactors, complex mathematical logic. |
+| **Gemini 3.1 Pro** | Massive Context (Native) | 2,000,000 | Reading entire projects, huge codebase analysis. |
 
 ## Development
 
-To modify the bridge, edit `index.js`. The server uses `StdioServerTransport` for communication.
-
 ```bash
-# Test the server locally (requires API key)
+# Run locally to verify setup
 node index.js
 ```
 
 ## License
 Apache 2.0
+
