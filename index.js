@@ -10,13 +10,13 @@ import OpenAI from "openai";
 const openai = new OpenAI({
   apiKey: process.env.NVIDIA_API_KEY,
   baseURL: "https://integrate.api.nvidia.com/v1",
-  timeout: 120000 // Forces an error instead of hanging indefinitely
+  timeout: 300000 // 5-minute timeout for the initial connection and headers
 });
 
 // 2. Initialize the MCP Server
 const server = new Server({
   name: "nvidia-mcp-bridge",
-  version: "1.2.3"
+  version: "1.3.0"
 }, {
   capabilities: { tools: {} }
 });
@@ -107,6 +107,7 @@ function handleApiError(error, toolName) {
 server.setRequestHandler(CallToolRequestSchema, async (request) => {
   const { name, arguments: args } = request.params;
 
+  // --- Tool: ask_gemma_4 ---
   if (name === "ask_gemma_4") {
     try {
       const prompt = args.prompt;
@@ -124,11 +125,35 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         top_p: 0.95,
         extra_body: {
           chat_template_kwargs: { "enable_thinking": true }
-        }
+        },
+        stream: true 
       });
 
+      let fullOutput = "";
+      let chunkCount = 0;
+      console.error(`[NVIDIA BRIDGE] Waiting for Gemma stream...`);
+
+      for await (const chunk of response) {
+        chunkCount++;
+        if (chunkCount === 1) console.error(`[NVIDIA BRIDGE] First Gemma chunk received.`);
+
+        if (!chunk.choices || chunk.choices.length === 0) continue;
+
+        const delta = chunk.choices[0].delta;
+        const reasoning = delta.reasoning || delta.reasoning_content;
+
+        if (reasoning) {
+          fullOutput += reasoning;
+        }
+        if (delta.content !== undefined && delta.content !== null) {
+          fullOutput += delta.content;
+        }
+      }
+
+      console.error(`[NVIDIA BRIDGE] Gemma stream complete. Total chunks: ${chunkCount}`);
+
       return {
-        content: [{ type: "text", text: response.choices[0].message.content }]
+        content: [{ type: "text", text: fullOutput }]
       };
 
     } catch (error) {
@@ -136,6 +161,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
     }
   }
 
+  // --- Tool: ask_deepseek_v4 ---
   if (name === "ask_deepseek_v4") {
     try {
       const prompt = args.prompt;
@@ -150,12 +176,39 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         model: "deepseek-ai/deepseek-v4-pro",
         messages: [{ role: "user", content: prompt }],
         max_tokens: finalMaxTokens,
-        temperature: 0.7,
-        top_p: 0.95
+        temperature: 0.6,
+        top_p: 0.95,
+        extra_body: {
+          chat_template_kwargs: { "thinking": true, "reasoning_effort": "medium" } 
+        },
+        stream: true 
       });
 
+      let fullOutput = "";
+      let chunkCount = 0;
+      console.error(`[NVIDIA BRIDGE] Waiting for DeepSeek stream...`);
+
+      for await (const chunk of response) {
+        chunkCount++;
+        if (chunkCount === 1) console.error(`[NVIDIA BRIDGE] First DeepSeek chunk received.`);
+
+        if (!chunk.choices || chunk.choices.length === 0) continue;
+
+        const delta = chunk.choices[0].delta;
+        const reasoning = delta.reasoning || delta.reasoning_content;
+
+        if (reasoning) {
+          fullOutput += reasoning;
+        }
+        if (delta.content !== undefined && delta.content !== null) {
+          fullOutput += delta.content;
+        }
+      }
+
+      console.error(`[NVIDIA BRIDGE] DeepSeek stream complete. Total chunks: ${chunkCount}`);
+
       return {
-        content: [{ type: "text", text: response.choices[0].message.content }]
+        content: [{ type: "text", text: fullOutput }]
       };
 
     } catch (error) {

@@ -9,8 +9,9 @@ A Model Context Protocol (MCP) server that bridges Antigravity and other MCP cli
 - **Dynamic Token Budgets**: Scalable output budgets from 4k up to 128k (for DeepSeek) to handle everything from quick Q&A to massive file refactors.
 - **Smart Rate-Limiting**: Built-in proactive throttling at 35 RPM to stay safely within NVIDIA's 40 RPM free tier limits.
 - **Automatic Heuristics**: DeepSeek tool automatically scales its token budget based on input size for large codebase context.
-- **Explicit Error Handling**: Clear, user-friendly diagnostic messages for API limits, configuration issues, and internal failures.
-- **Real-time Logging**: Stderr logging to verify tool calls, model selection, and token counts in real-time.
+- **Real-time Diagnostic Telemetry**: Stderr logging to verify tool calls, model selection, token counts, and stream health in real-time.
+- **Extended Timeouts**: 5-minute (300,000ms) global timeout to accommodate deep-reasoning tasks.
+- **Congestion Resilience**: Optimized parameters (e.g., medium reasoning effort) to maintain responsiveness during peak traffic.
 
 ## Installation
 
@@ -102,7 +103,26 @@ If you want absolute control and don't want the agent to guess, you can bypass i
 | :--- | :--- | :--- | :--- |
 | **Gemma 4 31B** | Logical Reasoning & "Thinking" | 32,768 | Fast logic checks, specific bug fixes. |
 | **DeepSeek V4 Pro** | Large-scale Software Engineering | 131,072 | Massive refactors, complex mathematical logic. |
-| **Gemini 3.1 Pro** | Massive Context (Native) | 2,000,000 | Reading entire projects, huge codebase analysis. |
+| **Gemini 3 Flash** | Massive Context (Native) | 1,000,000 | Reading entire projects, huge codebase analysis. |
+
+---
+
+## 🔍 Diagnostic Logging
+
+To ensure transparency during complex reasoning, the bridge outputs detailed telemetry to `stderr`. This allows you to monitor the request lifecycle without interfering with the standard MCP protocol.
+
+**Key Log Markers:**
+- `[NVIDIA BRIDGE] Waiting for stream...`: Request sent, awaiting initial response.
+- `[NVIDIA BRIDGE] First chunk received.`: The model has finished its internal reasoning and started streaming content.
+- `[NVIDIA BRIDGE] Stream complete. Total chunks: [X]`: Confirms full response delivery.
+
+## ❓ Troubleshooting
+
+### Latency & "Hanging" Responses
+If you experience delays or tool timeouts:
+1. **DeepSeek Traffic**: DeepSeek V4 Pro can experience significant latency during peak global traffic hours. If it takes longer than 60 seconds to see the "First chunk" log, the server is likely congested.
+2. **Switch to Gemma 4**: If DeepSeek is unresponsive, **Gemma 4** is often a more stable alternative during high-traffic periods.
+3. **Check Logs**: Monitor your MCP server logs for the diagnostic markers mentioned above to distinguish between network hangs and deep-reasoning wait times.
 
 ## Development
 
