@@ -52,6 +52,9 @@ To use this bridge, add it to your Antigravity configuration file.
 }
 ```
 
+> [!IMPORTANT]
+> Make sure to update the **path to `index.js`** in the `args` section above to match the actual location where you cloned this repository on your machine.
+
 ## Available Tools
 
 ### `ask_gemma_4`
