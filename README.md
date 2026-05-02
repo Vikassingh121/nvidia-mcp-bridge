@@ -46,6 +46,7 @@ To use this bridge, add it to your Antigravity configuration file.
       "args": [
         "D:/Projects/nvidia-mcp-bridge/index.js"
       ],
+      "cwd": "D:/Projects/nvidia-mcp-bridge",
       "env": {
         "NVIDIA_API_KEY": "your-api-key-here"
       }
