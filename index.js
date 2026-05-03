@@ -126,7 +126,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         extra_body: {
           chat_template_kwargs: { "enable_thinking": true }
         },
-        stream: true 
+        stream: true
       });
 
       let fullOutput = "";
@@ -179,9 +179,9 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         temperature: 0.6,
         top_p: 0.95,
         extra_body: {
-          chat_template_kwargs: { "thinking": true, "reasoning_effort": "medium" } 
+          chat_template_kwargs: { "thinking": true, "reasoning_effort": "max" }
         },
-        stream: true 
+        stream: true
       });
 
       let fullOutput = "";
