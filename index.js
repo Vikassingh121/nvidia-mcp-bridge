@@ -121,7 +121,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         model: "google/gemma-4-31b-it",
         messages: [{ role: "user", content: prompt }],
         max_tokens: finalMaxTokens,
-        temperature: 0.7,
+        temperature: 1,
         top_p: 0.95,
         extra_body: {
           chat_template_kwargs: { "enable_thinking": true }
@@ -176,7 +176,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         model: "deepseek-ai/deepseek-v4-pro",
         messages: [{ role: "user", content: prompt }],
         max_tokens: finalMaxTokens,
-        temperature: 0.6,
+        temperature: 1,
         top_p: 0.95,
         extra_body: {
           chat_template_kwargs: { "thinking": true, "reasoning_effort": "max" }
